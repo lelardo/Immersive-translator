@@ -1,7 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.UI;
 using UnityEngine.Networking;
 using TMPro;
 using System.IO;
@@ -21,110 +20,89 @@ public class LineaConTraduccion
 public class TraductorTexto : MonoBehaviour
 {
     [Header("Referencias UI")]
-    public RawImage visorFoto;
-    public AspectRatioFitter ajustadorAspecto;
+    // Borré visorFoto y ajustadorAspecto porque ya no los usas visualmente
     public TextMeshProUGUI textoEstado;
     
     [Header("Configuración")]
-    public string idiomaDestino = "en"; // en, fr, de, etc.
+    public string idiomaDestino = "en"; 
     
     private string rutaLog;
     private List<LineaConTraduccion> lineas = new List<LineaConTraduccion>();
-    private Texture2D imagenActual;
+    
+    // IMPORTANTE: Mantenemos esto en memoria aunque no se vea, 
+    // porque necesitamos sus dimensiones (ancho/alto) para las matemáticas.
+    private Texture2D imagenEnMemoria; 
 
     [Header("Reconstructor")]
-    public ReconstructorDocumento reconstructor; // ← NUEVO
+    public ReconstructorDocumento reconstructor;
 
     void Start()
     {
         rutaLog = Path.Combine(Application.persistentDataPath, "traductor_log.txt");
-        EscribirLog("\n\n=== TRADUCTOR INICIADO ===");
-        textoEstado.text = "Presiona el botón\npara escanear documento";
+        textoEstado.text = ""; // Limpio al inicio
     }
 
+    // Este método lo llama tu Gestor de Cámara o OCR
     public void ProcesarOCR(string jsonOCR, Texture2D imagen)
     {
         EscribirLog("=== Datos recibidos del OCR ===");
-        imagenActual = imagen;
         
-        MostrarImagen(imagen);
+        // Guardamos la referencia solo para saber el tamaño (Width/Height) luego
+        imagenEnMemoria = imagen; 
+        
         StartCoroutine(ExtraerYTraducir(jsonOCR));
-    }
-
-    void MostrarImagen(Texture2D textura)
-    {
-        visorFoto.texture = textura;
-
-        if (ajustadorAspecto != null)
-        {
-            float ratio = (float)textura.width / (float)textura.height;
-            ajustadorAspecto.aspectRatio = ratio;
-        }
-        
-        EscribirLog($"Imagen mostrada: {textura.width}x{textura.height}");
     }
 
     IEnumerator ExtraerYTraducir(string json)
     {
-        textoEstado.text = "Extrayendo texto...";
+        textoEstado.text = "Procesando...";
         lineas.Clear();
         
-        // Verificar errores del OCR
-        if (json.Contains("\"IsErroredOnProcessing\":true"))
+        // --- 1. VALIDACIONES RÁPIDAS ---
+        if (json.Contains("\"IsErroredOnProcessing\":true") || string.IsNullOrEmpty(json))
         {
-            EscribirLog("OCR reportó error");
-            textoEstado.text = "Error: OCR falló";
+            textoEstado.text = "Error en lectura OCR";
             yield break;
         }
-        
-        // Parsear JSON
+
         RespuestaOCR_V2 datos = JsonUtility.FromJson<RespuestaOCR_V2>(json);
         
-        if (datos == null || datos.ParsedResults == null || datos.ParsedResults.Count == 0)
+        if (datos == null || datos.ParsedResults == null || datos.ParsedResults.Count == 0 ||
+            datos.ParsedResults[0].TextOverlay == null)
         {
-            EscribirLog("JSON inválido o vacío");
-            textoEstado.text = "Error: Datos inválidos";
-            yield break;
-        }
-        
-        if (datos.ParsedResults[0].TextOverlay == null || datos.ParsedResults[0].TextOverlay.Lines == null)
-        {
-            EscribirLog("No hay líneas en el JSON");
             textoEstado.text = "No se detectó texto";
             yield break;
         }
         
         var lineasOCR = datos.ParsedResults[0].TextOverlay.Lines;
-        EscribirLog($"Líneas detectadas: {lineasOCR.Count}");
         
-        textoEstado.text = $"Traduciendo {lineasOCR.Count} líneas...";
-        
+        // --- 2. PROCESO DE TRADUCCIÓN ---
         int contador = 0;
         foreach (var lineaOCR in lineasOCR)
         {
             contador++;
-            textoEstado.text = $"Traduciendo {contador}/{lineasOCR.Count}...";
+            textoEstado.text = $"Traduciendo... {Mathf.Round((float)contador/lineasOCR.Count * 100)}%";
             
             string textoOriginal = lineaOCR.LineText;
             string textoTraducido = "";
             
-            // Traducir
+            // Llamada a Google Translate
             yield return StartCoroutine(TraducirTexto(textoOriginal, (resultado) => {
                 textoTraducido = resultado;
             }));
             
-            // Calcular ancho de la línea
+            // Cálculo de geometría para saber dónde pintar luego
             float anchoLinea = 0;
             if (lineaOCR.Words != null && lineaOCR.Words.Count > 0)
             {
-                float inicioPalabra = lineaOCR.Words[0].Left;
-                var ultimaPalabra = lineaOCR.Words[lineaOCR.Words.Count - 1];
-                float finPalabra = ultimaPalabra.Left + ultimaPalabra.Width;
-                anchoLinea = finPalabra - inicioPalabra;
+                float inicio = lineaOCR.Words[0].Left;
+                var finWord = lineaOCR.Words[lineaOCR.Words.Count - 1];
+                float fin = finWord.Left + finWord.Width;
+                anchoLinea = fin - inicio;
             }
             
-            // Guardar línea
-            LineaConTraduccion linea = new LineaConTraduccion
+            // Guardamos el objeto limpio
+            lineas.Add(new LineaConTraduccion
             {
                 original = textoOriginal,
                 traducido = textoTraducido,
@@ -132,105 +110,65 @@ public class TraductorTexto : MonoBehaviour
                 posX = lineaOCR.Words != null && lineaOCR.Words.Count > 0 ? lineaOCR.Words[0].Left : 0,
                 alto = lineaOCR.MaxHeight,
                 ancho = anchoLinea
-            };
-            
-            lineas.Add(linea);
-            EscribirLog($"[{contador}] '{textoOriginal}' → '{textoTraducido}'");
-            
-            yield return new WaitForSeconds(0.3f);
-        }
-        
-        MostrarResultado();
-    }
+            });
 
-    IEnumerator TraducirTexto(string texto, System.Action<string> callback)
-    {
-        // Google Translate API no oficial
-        string url = $"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={idiomaDestino}&dt=t&q={UnityWebRequest.EscapeURL(texto)}";
-        
-        UnityWebRequest www = UnityWebRequest.Get(url);
-        
-        yield return www.SendWebRequest();
-        
-        if (www.result == UnityWebRequest.Result.Success)
-        {
-            string respuesta = www.downloadHandler.text;
-            
-            int inicio = respuesta.IndexOf("[[\"") + 3;
-            int fin = respuesta.IndexOf("\"", inicio);
-            
-            if (fin > inicio)
-            {
-                string traduccion = respuesta.Substring(inicio, fin - inicio);
-                
-                traduccion = traduccion.Replace("\\u0027", "'");
-                traduccion = traduccion.Replace("\\n", "\n");
-                traduccion = traduccion.Replace("\\\"", "\"");
-                
-                callback(traduccion);
-            }
-            else
-            {
-                EscribirLog($"No se pudo parsear traducción de: '{texto}'");
-                callback(texto);
-            }
-        }
-        else
-        {
-            EscribirLog($"Error traduciendo '{texto}': {www.error}");
-            callback(texto);
-        }
-    }
-
-    void MostrarResultado()
-    {
-        string textoCompleto = "";
-        
-        foreach (var linea in lineas)
-        {
-            textoCompleto += linea.traducido + "\n";
+            // Pequeña pausa para no saturar la API de google si son muchas líneas
+            yield return new WaitForSeconds(0.1f); 
         }
         
-        textoEstado.text = textoCompleto.Trim();
-        EscribirLog($"✓ Traducción completa ({lineas.Count} líneas)");
+        // --- 3. FINALIZAR Y MANDAR A RECONSTRUIR ---
+        textoEstado.text = ""; // Borramos el texto de estado para que se vea limpio
         
-        GuardarDatosTraduccion();
-        
-        // ✅ NUEVO: Reconstruir documento
-        if (reconstructor != null && imagenActual != null)
+        if (reconstructor != null && imagenEnMemoria != null)
         {
-            Vector2 dimensiones = new Vector2(imagenActual.width, imagenActual.height);
+            // Aquí es donde usamos la imagen: Pasamos sus dimensiones (ej. 1920x1080)
+            // para que el reconstructor sepa hacer la regla de tres.
+            Vector2 dimensiones = new Vector2(imagenEnMemoria.width, imagenEnMemoria.height);
             reconstructor.ReconstruirDocumento(lineas, dimensiones);
         }
     }
 
-    void GuardarDatosTraduccion()
+    IEnumerator TraducirTexto(string texto, System.Action<string> callback)
     {
-        string jsonLineas = JsonUtility.ToJson(new ListaLineas { lineas = lineas }, true);
-        string ruta = Path.Combine(Application.persistentDataPath, "traduccion_final.json");
-        File.WriteAllText(ruta, jsonLineas);
-        EscribirLog($"Datos guardados: {ruta}");
+        string url = $"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={idiomaDestino}&dt=t&q={UnityWebRequest.EscapeURL(texto)}";
+        using (UnityWebRequest www = UnityWebRequest.Get(url))
+        {
+            yield return www.SendWebRequest();
+            if (www.result == UnityWebRequest.Result.Success)
+            {
+                string respuesta = www.downloadHandler.text;
+                // Parseo manual rápido del JSON de Google
+                int inicio = respuesta.IndexOf("[[\"") + 3;
+                int fin = respuesta.IndexOf("\"", inicio);
+                if (fin > inicio)
+                {
+                    string t = respuesta.Substring(inicio, fin - inicio);
+                    // Limpieza básica de caracteres escapados
+                    t = t.Replace("\\u0027", "'").Replace("\\n", "\n").Replace("\\\"", "\"");
+                    callback(t);
+                }
+                else callback(texto);
+            }
+            else callback(texto); // Si falla, devuelve el original
+        }
     }
 
     void EscribirLog(string mensaje)
     {
-        string logLine = $"[{DateTime.Now:HH:mm:ss}] {mensaje}\n";
+        // Debug.Log solo para desarrollo, puedes quitarlo luego
         Debug.Log("[TRADUCTOR] " + mensaje);
-        
-        try 
-        {
-            File.AppendAllText(rutaLog, logLine);
-        } 
-        catch { }
     }
-    
+
     public void LimpiarDatos()
     {
         lineas.Clear();
-        textoEstado.text = "Presiona el botón\npara escanear documento";
-        visorFoto.texture = null;
+        textoEstado.text = "";
+        imagenEnMemoria = null;
     }
 }
+
+// MANTÉN TUS CLASES SERIALIZABLES ABAJO IGUAL QUE ANTES (RespuestaOCR_V2, etc.)
+// ... (Copiar las clases de abajo de tu script anterior)
 
 [Serializable]
 public class ListaLineas
