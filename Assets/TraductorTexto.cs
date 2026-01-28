@@ -32,6 +32,9 @@ public class TraductorTexto : MonoBehaviour
     private List<LineaConTraduccion> lineas = new List<LineaConTraduccion>();
     private Texture2D imagenActual;
 
+    [Header("Reconstructor")]
+    public ReconstructorDocumento reconstructor; // ← NUEVO
+
     void Start()
     {
         rutaLog = Path.Combine(Application.persistentDataPath, "traductor_log.txt");
@@ -192,6 +195,13 @@ public class TraductorTexto : MonoBehaviour
         EscribirLog($"✓ Traducción completa ({lineas.Count} líneas)");
         
         GuardarDatosTraduccion();
+        
+        // ✅ NUEVO: Reconstruir documento
+        if (reconstructor != null && imagenActual != null)
+        {
+            Vector2 dimensiones = new Vector2(imagenActual.width, imagenActual.height);
+            reconstructor.ReconstruirDocumento(lineas, dimensiones);
+        }
     }
 
     void GuardarDatosTraduccion()
