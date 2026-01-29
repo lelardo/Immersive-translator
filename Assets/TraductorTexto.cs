@@ -126,6 +126,7 @@ public class TraductorTexto : MonoBehaviour
             Vector2 dimensiones = new Vector2(imagenEnMemoria.width, imagenEnMemoria.height);
             reconstructor.ReconstruirDocumento(lineas, dimensiones);
         }
+        
     }
 
     IEnumerator TraducirTexto(string texto, System.Action<string> callback)

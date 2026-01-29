@@ -101,6 +101,8 @@ public class ControladorOCR : MonoBehaviour
             string rutaJson = Path.Combine(Application.persistentDataPath, "ocr_resultado.json");
             File.WriteAllText(rutaJson, json);
             EscribirLog($"JSON guardado: {rutaJson}");
+
+            
             
             // Enviar datos al traductor
             if (traductor != null)

@@ -25,6 +25,7 @@ public class ReconstructorDocumento : MonoBehaviour
 
     void Start()
     {
+        
         rutaLog = Path.Combine(Application.persistentDataPath, "reconstructor_log.txt");
         EscribirLog("=== RECONSTRUCTOR INICIADO ===");
     }
