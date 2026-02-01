@@ -2,7 +2,7 @@ using UnityEngine;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
 using System.Collections;
-using System.Collections.Generic; // Necesario para Listas
+using System.Collections.Generic;
 using TMPro;
 
 public class ControladorAR : MonoBehaviour
@@ -14,56 +14,59 @@ public class ControladorAR : MonoBehaviour
     public GameObject panelReconstruccion;
 
     [Header("Referencias Externas")]
-    public ControladorOCR controladorOCR;
+    public ControladorOCR controladorOCR; // <<<--- ¡ESTA ERA LA LÍNEA PERDIDA!
 
     [Header("UI")]
     public TextMeshProUGUI textoInstrucciones; 
+    public GameObject botonColocarUI; 
 
     // Estados
     private bool buscandoSuelo = false;
-    private Pose ultimaPosicionValida; // Guardamos dónde ponerlo
-    private bool posicionEncontrada = false;
+    private bool cursorEsValido = false;
 
     void Start()
     {
-        // 1. Apagar todo al inicio
+        // 1. Estado inicial: todo apagado
         planeManager.enabled = false; 
         cursorGuia.SetActive(false);
-        panelReconstruccion.SetActive(false); // El documento empieza oculto
+        panelReconstruccion.SetActive(false);
         
-        // 2. Iniciar secuencia
+        if(botonColocarUI != null) botonColocarUI.SetActive(false);
+
+        // 2. ¡ARRANCAR LA CÁMARA! (Recuperado)
         StartCoroutine(IniciarSecuenciaAutomatica());
     }
 
     IEnumerator IniciarSecuenciaAutomatica()
     {
-        if(textoInstrucciones) textoInstrucciones.text = "Iniciando cámara...";
         yield return new WaitForSeconds(1.0f);
         
-        if(controladorOCR != null)
+        if(controladorOCR != null) 
         {
             controladorOCR.IniciarEscaneo();
         }
+        else
+        {
+            Debug.LogError("¡OLVIDASTE ASIGNAR EL CONTROLADOR OCR EN EL INSPECTOR!");
+            if(textoInstrucciones) textoInstrucciones.text = "Error: Falta ControladorOCR";
+        }
     }
 
-    // Este método lo llama el ControladorOCR cuando vuelve de la cámara
+    // Llamado por ControladorOCR al volver de la foto
     public void NotificarRegresoDeCamara()
     {
-        planeManager.enabled = true; // Encendemos el cerebro AR
+        if(textoInstrucciones) textoInstrucciones.text = "Apunta al suelo...";
+        planeManager.enabled = true; 
         buscandoSuelo = true;
         
-        if(textoInstrucciones) textoInstrucciones.text = "Mueve el celular lentamente para detectar el suelo...";
-        
-        // Aseguramos que el panel siga oculto hasta que el usuario decida
-        panelReconstruccion.SetActive(false);
+        // Mostramos el botón para colocar
+        if(botonColocarUI != null) botonColocarUI.SetActive(true);
     }
 
     void Update()
     {
         if (!buscandoSuelo) return;
-
         ActualizarCursor();
-        DetectarToque();
     }
 
     void ActualizarCursor()
@@ -71,80 +74,45 @@ public class ControladorAR : MonoBehaviour
         var centro = new Vector2(Screen.width / 2, Screen.height / 2);
         var hits = new List<ARRaycastHit>();
 
-        // Intentamos detectar planos o puntos
         if (raycastManager.Raycast(centro, hits, TrackableType.PlaneWithinPolygon | TrackableType.FeaturePoint))
         {
             cursorGuia.SetActive(true);
-            
-            // Guardamos la posición
-            Pose poseDetectada = hits[0].pose;
-            cursorGuia.transform.position = poseDetectada.position;
+            cursorEsValido = true;
 
-            // --- CORRECCIÓN DE ROTACIÓN (El truco) ---
-            // Ignoramos la rotación que nos da Unity y forzamos que mire "hacia arriba" (plano)
-            // Esto evita que salga vertical.
-            // Si tu cursor sale de lado con esto, cambia Vector3.up por Vector3.forward
-            cursorGuia.transform.rotation = Quaternion.LookRotation(Vector3.forward, Vector3.up); 
-            
-            // Corrección extra: Si es un plano plano (Plane), usamos su rotación real si queremos
-            if(hits[0].trackable is ARPlane)
-            {
-                cursorGuia.transform.rotation = hits[0].pose.rotation;
-            }
+            // Corrección visual: Subir 5cm y acostar rotación
+            Vector3 posCorregida = hits[0].pose.position;
+            posCorregida.y += 0.05f; 
+            cursorGuia.transform.position = posCorregida;
+            cursorGuia.transform.rotation = Quaternion.Euler(90, 0, 0);
 
-            ultimaPosicionValida = hits[0].pose;
-            posicionEncontrada = true;
-
-            if(textoInstrucciones) textoInstrucciones.text = "¡Superficie detectada! Toca para colocar";
+            if(textoInstrucciones) textoInstrucciones.text = "Detectado. Pulsa el botón";
         }
         else
         {
             cursorGuia.SetActive(false);
-            posicionEncontrada = false;
+            cursorEsValido = false;
             if(textoInstrucciones) textoInstrucciones.text = "Buscando superficie...";
         }
     }
 
-    void DetectarToque()
+    // Función del Botón
+    public void ColocarDocumentoManual()
     {
-        // Soporte para dedo (Touch) o Mouse (Click en editor)
-        bool tocar = (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began) || Input.GetMouseButtonDown(0);
+        if (!cursorEsValido || !buscandoSuelo) return;
 
-        if (tocar && posicionEncontrada)
-        {
-            ColocarDocumentoFinal();
-        }
-    }
-
-    void ColocarDocumentoFinal()
-    {
-        Debug.Log("COLOCANDO DOCUMENTO...");
-
-        // 1. Activar el documento en la posición del cursor
         panelReconstruccion.SetActive(true);
         panelReconstruccion.transform.position = cursorGuia.transform.position;
+        panelReconstruccion.transform.rotation = cursorGuia.transform.rotation;
         
-        // Forzamos rotación plana para que se lea bien en el suelo/mesa
-        // (90 grados en X suele ser "acostado" para UI en World Space)
-        panelReconstruccion.transform.rotation = Quaternion.Euler(90, 0, 0);
+        // Apagar sistema
+        buscandoSuelo = false;
+        cursorGuia.SetActive(false);
+        planeManager.enabled = false; 
+        if(botonColocarUI != null) botonColocarUI.SetActive(false);
         
-        // 2. IMPORTANTE: Asegurar escala (a veces sale diminuto o gigante)
-        panelReconstruccion.transform.localScale = Vector3.one; 
-
-        // 3. APAGAR EL SISTEMA AR (Congelar todo)
-        buscandoSuelo = false;       // Dejar de ejecutar Update
-        cursorGuia.SetActive(false); // Ocultar cursor
-        planeManager.enabled = false;// Dejar de buscar planos (ahorra batería)
-        OcultarPlanosExistentes();   // Limpiar lo visual
-
-        if(textoInstrucciones) textoInstrucciones.text = "Documento Anclado";
-    }
-
-    void OcultarPlanosExistentes()
-    {
-        foreach (var plane in planeManager.trackables)
-        {
-            plane.gameObject.SetActive(false);
-        }
+        // Limpiar planos azules
+        foreach (var plano in planeManager.trackables) plano.gameObject.SetActive(false);
+        
+        if(textoInstrucciones) textoInstrucciones.text = "Finalizado";
     }
 }
