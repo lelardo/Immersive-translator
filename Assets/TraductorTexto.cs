@@ -73,7 +73,11 @@ public class TraductorTexto : MonoBehaviour
             textoEstado.text = "No se detectó texto";
             yield break;
         }
-        
+        void Awake()
+        {
+            DontDestroyOnLoad(gameObject);
+        }
+
         var lineasOCR = datos.ParsedResults[0].TextOverlay.Lines;
         
         // --- 2. PROCESO DE TRADUCCIÓN ---

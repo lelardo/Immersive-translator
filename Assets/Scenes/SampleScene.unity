@@ -518,7 +518,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ReconstructorDocumento
   fondoDocumento: {fileID: 1281212798}
   contenedorTextos: {fileID: 24016872}
-  prefabTexto: {fileID: 0}
+  prefabTexto: {fileID: 2797928453050689354, guid: 73de2804841bb8c4fa06a2f43818528e, type: 3}
   colorFondo: {r: 1, g: 1, b: 1, a: 1}
   colorTexto: {r: 0, g: 0, b: 0, a: 1}
   factorEscalaTexto: 1
@@ -1386,10 +1386,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 85ce8d849c389ea4a9a18c1959a42c53, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ControladorAR
+  planeManager: {fileID: 1375737373}
   raycastManager: {fileID: 1375737370}
-  panelReconstruccion: {fileID: 1633150474}
   cursorGuia: {fileID: 1964602097}
-  modoEscaneoActivo: 1
+  panelReconstruccion: {fileID: 1633150474}
+  controladorOCR: {fileID: 2022318726}
+  textoInstrucciones: {fileID: 259322434}
 --- !u!114 &1375737370
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1839,6 +1841,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ControladorOCR
   traductor: {fileID: 683671895}
+  controladorAR: {fileID: 1375737369}
 --- !u!4 &2022318727
 Transform:
   m_ObjectHideFlags: 0

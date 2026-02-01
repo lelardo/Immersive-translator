@@ -1,7 +1,9 @@
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
+using UnityEngine.XR.ARSubsystems;
 using System.Collections;
-using TMPro; // Para el texto de UI
+using System.Collections.Generic; // Necesario para Listas
+using TMPro;
 
 public class ControladorAR : MonoBehaviour
 {
@@ -11,119 +13,138 @@ public class ControladorAR : MonoBehaviour
     public GameObject cursorGuia;
     public GameObject panelReconstruccion;
 
-    [Header("UI")]
-    public GameObject botonEscanear;
-    public TextMeshProUGUI textoInstrucciones; // Un texto arriba que diga qué hacer
+    [Header("Referencias Externas")]
+    public ControladorOCR controladorOCR;
 
-    // Variables internas
-    private bool esperandoParaColocar = false;
-    private Texture2D fotoCapturada;
-    
-    // Referencia a tu traductor
-    public TraductorTexto miTraductor; 
+    [Header("UI")]
+    public TextMeshProUGUI textoInstrucciones; 
+
+    // Estados
+    private bool buscandoSuelo = false;
+    private Pose ultimaPosicionValida; // Guardamos dónde ponerlo
+    private bool posicionEncontrada = false;
 
     void Start()
     {
-        // 1. AL INICIO: Apagar todo lo de AR para no gastar recursos ni confundir
+        // 1. Apagar todo al inicio
         planeManager.enabled = false; 
         cursorGuia.SetActive(false);
+        panelReconstruccion.SetActive(false); // El documento empieza oculto
+        
+        // 2. Iniciar secuencia
+        StartCoroutine(IniciarSecuenciaAutomatica());
+    }
+
+    IEnumerator IniciarSecuenciaAutomatica()
+    {
+        if(textoInstrucciones) textoInstrucciones.text = "Iniciando cámara...";
+        yield return new WaitForSeconds(1.0f);
+        
+        if(controladorOCR != null)
+        {
+            controladorOCR.IniciarEscaneo();
+        }
+    }
+
+    // Este método lo llama el ControladorOCR cuando vuelve de la cámara
+    public void NotificarRegresoDeCamara()
+    {
+        planeManager.enabled = true; // Encendemos el cerebro AR
+        buscandoSuelo = true;
+        
+        if(textoInstrucciones) textoInstrucciones.text = "Mueve el celular lentamente para detectar el suelo...";
+        
+        // Aseguramos que el panel siga oculto hasta que el usuario decida
         panelReconstruccion.SetActive(false);
-        
-        // Ocultar los planos feos si habían quedado
-        OcultarPlanos();
-
-        textoInstrucciones.text = "Presiona Escanear para comenzar";
-        
-    }
-
-    // --- PASO A: ESTO LO LLAMA TU BOTÓN "ESCANEAR" ---
-    public void IniciarProceso()
-    {
-        // Aquí llamas a tu script de cámara nativa.
-        // Simulamos que al volver, recibes la foto en la función "RecibirFoto"
-        
-        // EJEMPLO (Pseudocódigo de tu cámara nativa):
-        // NativeCamera.TakePicture((path) => {
-        //     Texture2D textura = NativeCamera.LoadImageAtPath(path);
-        //     RecibirFoto(textura);
-        // });
-        
-        Debug.Log("Abriendo cámara nativa...");
-    }
-
-    // --- PASO B: AL VOLVER DE LA CÁMARA ---
-    public void RecibirFoto(Texture2D foto)
-    {
-        fotoCapturada = foto;
-        
-        // 1. Mandar a traducir inmediatamente en segundo plano
-        if(miTraductor != null) miTraductor.ProcesarOCR("json_falso_aqui", foto); // Ajusta según tu script
-
-        // 2. Activar el cerebro AR recién ahora
-        planeManager.enabled = true; // ¡DESPIERTA AR!
-        esperandoParaColocar = true;
-        
-        // 3. Actualizar UI
-        botonEscanear.SetActive(false);
-        textoInstrucciones.text = "¡Foto lista! Apunta a la mesa y toca para ver la traducción";
     }
 
     void Update()
     {
-        // Solo trabajamos si ya volvimos de la cámara y estamos buscando mesa
-        if (!esperandoParaColocar) return;
+        if (!buscandoSuelo) return;
 
         ActualizarCursor();
-
-        // Si toca la pantalla y el cursor está visible...
-        if (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began)
-        {
-            if (cursorGuia.activeSelf)
-            {
-                ColocarDocumentoFinal();
-            }
-        }
+        DetectarToque();
     }
 
     void ActualizarCursor()
     {
-        // Mismo código de raycast que arreglamos antes
         var centro = new Vector2(Screen.width / 2, Screen.height / 2);
-        var hits = new System.Collections.Generic.List<ARRaycastHit>();
+        var hits = new List<ARRaycastHit>();
 
-        if (raycastManager.Raycast(centro, hits, UnityEngine.XR.ARSubsystems.TrackableType.PlaneWithinPolygon))
+        // Intentamos detectar planos o puntos
+        if (raycastManager.Raycast(centro, hits, TrackableType.PlaneWithinPolygon | TrackableType.FeaturePoint))
         {
             cursorGuia.SetActive(true);
-            cursorGuia.transform.position = hits[0].pose.position;
-            cursorGuia.transform.rotation = hits[0].pose.rotation;
+            
+            // Guardamos la posición
+            Pose poseDetectada = hits[0].pose;
+            cursorGuia.transform.position = poseDetectada.position;
+
+            // --- CORRECCIÓN DE ROTACIÓN (El truco) ---
+            // Ignoramos la rotación que nos da Unity y forzamos que mire "hacia arriba" (plano)
+            // Esto evita que salga vertical.
+            // Si tu cursor sale de lado con esto, cambia Vector3.up por Vector3.forward
+            cursorGuia.transform.rotation = Quaternion.LookRotation(Vector3.forward, Vector3.up); 
+            
+            // Corrección extra: Si es un plano plano (Plane), usamos su rotación real si queremos
+            if(hits[0].trackable is ARPlane)
+            {
+                cursorGuia.transform.rotation = hits[0].pose.rotation;
+            }
+
+            ultimaPosicionValida = hits[0].pose;
+            posicionEncontrada = true;
+
+            if(textoInstrucciones) textoInstrucciones.text = "¡Superficie detectada! Toca para colocar";
         }
         else
         {
             cursorGuia.SetActive(false);
+            posicionEncontrada = false;
+            if(textoInstrucciones) textoInstrucciones.text = "Buscando superficie...";
+        }
+    }
+
+    void DetectarToque()
+    {
+        // Soporte para dedo (Touch) o Mouse (Click en editor)
+        bool tocar = (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began) || Input.GetMouseButtonDown(0);
+
+        if (tocar && posicionEncontrada)
+        {
+            ColocarDocumentoFinal();
         }
     }
 
     void ColocarDocumentoFinal()
     {
-        // 1. Mover el panel al cursor
+        Debug.Log("COLOCANDO DOCUMENTO...");
+
+        // 1. Activar el documento en la posición del cursor
         panelReconstruccion.SetActive(true);
         panelReconstruccion.transform.position = cursorGuia.transform.position;
-        panelReconstruccion.transform.rotation = cursorGuia.transform.rotation;
-
-        // 2. Bloquear todo
-        esperandoParaColocar = false;
-        cursorGuia.SetActive(false);
-        planeManager.enabled = false; // Ya no necesitamos buscar más pisos
-        OcultarPlanos(); // Limpieza visual
         
-        textoInstrucciones.text = "Traducción completada";
+        // Forzamos rotación plana para que se lea bien en el suelo/mesa
+        // (90 grados en X suele ser "acostado" para UI en World Space)
+        panelReconstruccion.transform.rotation = Quaternion.Euler(90, 0, 0);
+        
+        // 2. IMPORTANTE: Asegurar escala (a veces sale diminuto o gigante)
+        panelReconstruccion.transform.localScale = Vector3.one; 
+
+        // 3. APAGAR EL SISTEMA AR (Congelar todo)
+        buscandoSuelo = false;       // Dejar de ejecutar Update
+        cursorGuia.SetActive(false); // Ocultar cursor
+        planeManager.enabled = false;// Dejar de buscar planos (ahorra batería)
+        OcultarPlanosExistentes();   // Limpiar lo visual
+
+        if(textoInstrucciones) textoInstrucciones.text = "Documento Anclado";
     }
 
-    void OcultarPlanos()
+    void OcultarPlanosExistentes()
     {
-        foreach (var plano in planeManager.trackables)
+        foreach (var plane in planeManager.trackables)
         {
-            plano.gameObject.SetActive(false);
+            plane.gameObject.SetActive(false);
         }
     }
 }
