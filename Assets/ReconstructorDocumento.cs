@@ -2,110 +2,77 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
-using System.IO;
 
 public class ReconstructorDocumento : MonoBehaviour
 {
-    [Header("Referencias UI")]
-    public RawImage fondoDocumento; 
-    public RectTransform contenedorTextos; 
-    public GameObject prefabTexto; 
-    
+    [Header("referencias")]
+    public RectTransform contenedorTextos;
+    public GameObject prefabTexto;
+
     [Header("Configuración")]
-    public Color colorFondo = Color.white;
-    public Color colorTexto = Color.black;
-    public float factorEscalaTexto = 1.0f;
-    
-    private List<GameObject> textosInstanciados = new List<GameObject>();
-    private Vector2 dimensionesOriginales;
+    public float factorEscala = 1.0f;
+
+    private List<GameObject> instanciados = new List<GameObject>();
+
+    [Header("Ajuste Fino")]
+    [Range(0.1f, 2.0f)]
+    public float factorAnchoCaja = 1.0f;
 
     public void ReconstruirDocumento(List<LineaConTraduccion> lineas, Vector2 dimensionesImagen)
     {
-        dimensionesOriginales = dimensionesImagen;
-        
         LimpiarTextos();
-        ConfigurarFondo();
-        
+
+        if (contenedorTextos == null || lineas == null || lineas.Count == 0) return;
+
+        // 1. Calculamos la escala (Relación Tamaño Pantalla / Tamaño Foto Original)
+        float escalaX = contenedorTextos.rect.width / dimensionesImagen.x;
+        float escalaY = contenedorTextos.rect.height / dimensionesImagen.y;
+
         foreach (var linea in lineas)
         {
-            CrearTexto(linea);
-        }
-    }
-    void Awake()
-        {
-            DontDestroyOnLoad(gameObject);
-        }
+            GameObject obj = Instantiate(prefabTexto, contenedorTextos);
+            RectTransform rt = obj.GetComponent<RectTransform>();
+            TMP_Text tmp = obj.GetComponent<TMP_Text>();
 
-    void ConfigurarFondo()
-    {
-        if (fondoDocumento != null)
-        {
-            Texture2D texturaBlanca = new Texture2D(1, 1);
-            texturaBlanca.SetPixel(0, 0, colorFondo);
-            texturaBlanca.Apply();
+            // 2. Colocamos el texto
+            tmp.text = linea.traducido;
+            tmp.color = Color.black;
+
+            // --- MAGIA AQUÍ: CONFIGURACIÓN ANTISUPERPOSICIÓN ---
             
-            fondoDocumento.texture = texturaBlanca;
-            // CRÍTICO: Esto asegura que el fondo sea blanco puro y no se mezcle con gris
-            fondoDocumento.color = Color.white; 
+            // A) Anclajes arriba-izquierda (Estándar para coordenadas de imagen)
+            rt.anchorMin = new Vector2(0, 1);
+            rt.anchorMax = new Vector2(0, 1);
+            rt.pivot = new Vector2(0, 1);
+
+            // B) Calcular Posición y Tamaño de la CAJA (No de la fuente)
+            float posX = linea.posX * escalaX;
+            float posY = -linea.posY * escalaY; // Negativo porque Unity Y crece hacia arriba
+            float ancho = linea.ancho * escalaX * factorAnchoCaja; 
+            float alto = linea.alto * escalaY;
+
+            // C) Aplicar dimensiones a la CAJA
+            rt.anchoredPosition = new Vector2(posX, posY);
+            rt.sizeDelta = new Vector2(ancho, alto);
+
+            // D) EL TRUCO: Decirle a la fuente "Cabe aquí dentro o reduce tu tamaño"
+            tmp.enableAutoSizing = true; 
+            
+            // Límites: Nunca más pequeño que 2, nunca más grande que la altura de su caja
+            tmp.fontSizeMin = 2; 
+            tmp.fontSizeMax = alto * 0.9f; // 90% de la altura de la caja para dejar margen
+            
+            // Alineación vertical al medio para centrar en su renglón
+            tmp.alignment = TextAlignmentOptions.MidlineLeft;
+            
+            // Evitar desbordamientos
+            tmp.overflowMode = TextOverflowModes.Ellipsis; 
+            tmp.enableWordWrapping = false; // Importante: En OCR línea a línea, no queremos saltos de carro
         }
     }
 
-    void CrearTexto(LineaConTraduccion linea)
+    private void LimpiarTextos()
     {
-        // Seguridad: Si no hay contenedor, no hacemos nada
-        if(contenedorTextos == null) return;
-
-        GameObject textoObj;
-        TextMeshProUGUI textComponent;
-        
-        if (prefabTexto != null)
-        {
-            textoObj = Instantiate(prefabTexto, contenedorTextos);
-            textComponent = textoObj.GetComponent<TextMeshProUGUI>();
-        }
-        else
-        {
-            textoObj = new GameObject($"Linea_{textosInstanciados.Count}");
-            textoObj.transform.SetParent(contenedorTextos, false);
-            textComponent = textoObj.AddComponent<TextMeshProUGUI>();
-        }
-        
-        textComponent.text = linea.traducido;
-        textComponent.color = colorTexto;
-        // Ajustamos un poco el tamaño base para que se lea mejor en móvil
-        textComponent.fontSize = 24 * factorEscalaTexto; 
-        textComponent.alignment = TextAlignmentOptions.TopLeft;
-        textComponent.overflowMode = TextOverflowModes.Overflow;
-        
-        RectTransform rectTransform = textoObj.GetComponent<RectTransform>();
-        
-        // Matemáticas de escalado
-        float escalaX = contenedorTextos.rect.width / dimensionesOriginales.x;
-        float escalaY = contenedorTextos.rect.height / dimensionesOriginales.y;
-        
-        rectTransform.anchorMin = new Vector2(0, 1);
-        rectTransform.anchorMax = new Vector2(0, 1);
-        rectTransform.pivot = new Vector2(0, 1);
-        
-        float posX = linea.posX * escalaX;
-        float posY = -linea.posY * escalaY; 
-        
-        rectTransform.anchoredPosition = new Vector2(posX, posY);
-        
-        float ancho = linea.ancho > 0 ? linea.ancho * escalaX : 500;
-        float alto = linea.alto > 0 ? linea.alto * escalaY : 50;
-        
-        rectTransform.sizeDelta = new Vector2(ancho, alto);
-        
-        textosInstanciados.Add(textoObj);
-    }
-
-    void LimpiarTextos()
-    {
-        foreach (var texto in textosInstanciados)
-        {
-            if(texto != null) Destroy(texto);
-        }
-        textosInstanciados.Clear();
+        foreach (Transform child in contenedorTextos) Destroy(child.gameObject);
     }
 }

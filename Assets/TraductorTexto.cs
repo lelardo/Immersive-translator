@@ -13,69 +13,67 @@ public class LineaConTraduccion
     public string traducido;
     public float posY;
     public float posX;
-    public float alto;
+    public float alto; // <--- ESTO ES LO IMPORTANTE PARA EL TAMAÑO DE LETRA
     public float ancho;
 }
 
 public class TraductorTexto : MonoBehaviour
 {
     [Header("Referencias UI")]
-    // Borré visorFoto y ajustadorAspecto porque ya no los usas visualmente
     public TextMeshProUGUI textoEstado;
     
     [Header("Configuración")]
-    public string idiomaDestino = "en"; 
+    public string idiomaDestino = "es"; // Sugerencia: Cambiado a 'es' por defecto
     
     private string rutaLog;
     private List<LineaConTraduccion> lineas = new List<LineaConTraduccion>();
-    
-    // IMPORTANTE: Mantenemos esto en memoria aunque no se vea, 
-    // porque necesitamos sus dimensiones (ancho/alto) para las matemáticas.
     private Texture2D imagenEnMemoria; 
 
     [Header("Reconstructor")]
     public ReconstructorDocumento reconstructor;
 
+    void Awake() // <--- MOVIDO AQUÍ (Lugar correcto)
+    {
+        DontDestroyOnLoad(gameObject);
+    }
+
     void Start()
     {
         rutaLog = Path.Combine(Application.persistentDataPath, "traductor_log.txt");
-        textoEstado.text = ""; // Limpio al inicio
+        if(textoEstado) textoEstado.text = ""; 
     }
 
-    // Este método lo llama tu Gestor de Cámara o OCR
     public void ProcesarOCR(string jsonOCR, Texture2D imagen)
     {
         EscribirLog("=== Datos recibidos del OCR ===");
-        
-        // Guardamos la referencia solo para saber el tamaño (Width/Height) luego
         imagenEnMemoria = imagen; 
-        
         StartCoroutine(ExtraerYTraducir(jsonOCR));
     }
 
     IEnumerator ExtraerYTraducir(string json)
     {
-        textoEstado.text = "Procesando...";
+        if(textoEstado) textoEstado.text = "Procesando...";
         lineas.Clear();
         
-        // --- 1. VALIDACIONES RÁPIDAS ---
-        if (json.Contains("\"IsErroredOnProcessing\":true") || string.IsNullOrEmpty(json))
+        // --- 1. VALIDACIONES ---
+        if (string.IsNullOrEmpty(json) || json.Contains("\"IsErroredOnProcessing\":true"))
         {
-            textoEstado.text = "Error en lectura OCR";
+            if(textoEstado) textoEstado.text = "Error en lectura OCR";
             yield break;
         }
 
-        RespuestaOCR_V2 datos = JsonUtility.FromJson<RespuestaOCR_V2>(json);
-        
+        RespuestaOCR_V2 datos = null;
+        try 
+        {
+            datos = JsonUtility.FromJson<RespuestaOCR_V2>(json);
+        }
+        catch (Exception) { }
+
         if (datos == null || datos.ParsedResults == null || datos.ParsedResults.Count == 0 ||
             datos.ParsedResults[0].TextOverlay == null)
         {
-            textoEstado.text = "No se detectó texto";
+            if(textoEstado) textoEstado.text = "No se detectó texto";
             yield break;
-        }
-        void Awake()
-        {
-            DontDestroyOnLoad(gameObject);
         }
 
         var lineasOCR = datos.ParsedResults[0].TextOverlay.Lines;
@@ -85,7 +83,7 @@ public class TraductorTexto : MonoBehaviour
         foreach (var lineaOCR in lineasOCR)
         {
             contador++;
-            textoEstado.text = $"Traduciendo... {Mathf.Round((float)contador/lineasOCR.Count * 100)}%";
+            if(textoEstado) textoEstado.text = $"Traduciendo... {Mathf.Round((float)contador/lineasOCR.Count * 100)}%";
             
             string textoOriginal = lineaOCR.LineText;
             string textoTraducido = "";
@@ -95,43 +93,48 @@ public class TraductorTexto : MonoBehaviour
                 textoTraducido = resultado;
             }));
             
-            // Cálculo de geometría para saber dónde pintar luego
+            // Cálculo de ancho (aunque para la lista vertical no es crítico, lo mantenemos)
             float anchoLinea = 0;
+            float posX = 0;
             if (lineaOCR.Words != null && lineaOCR.Words.Count > 0)
             {
-                float inicio = lineaOCR.Words[0].Left;
+                posX = lineaOCR.Words[0].Left;
                 var finWord = lineaOCR.Words[lineaOCR.Words.Count - 1];
-                float fin = finWord.Left + finWord.Width;
-                anchoLinea = fin - inicio;
+                anchoLinea = (finWord.Left + finWord.Width) - posX;
             }
             
-            // Guardamos el objeto limpio
+            // GUARDAMOS LOS DATOS
             lineas.Add(new LineaConTraduccion
             {
                 original = textoOriginal,
                 traducido = textoTraducido,
                 posY = lineaOCR.MinTop,
-                posX = lineaOCR.Words != null && lineaOCR.Words.Count > 0 ? lineaOCR.Words[0].Left : 0,
-                alto = lineaOCR.MaxHeight,
+                posX = posX,
+                alto = lineaOCR.MaxHeight, // <--- AQUÍ CAPTURAMOS LA ALTURA DE LA FUENTE
                 ancho = anchoLinea
             });
 
-            // Pequeña pausa para no saturar la API de google si son muchas líneas
             yield return new WaitForSeconds(0.1f); 
         }
         
-        // --- 3. FINALIZAR Y MANDAR A RECONSTRUIR ---
-        textoEstado.text = ""; // Borramos el texto de estado para que se vea limpio
+        // --- 3. MANDAR A RECONSTRUIR ---
+        if(textoEstado) textoEstado.text = ""; 
         
-        if (reconstructor != null && imagenEnMemoria != null)
+        if (reconstructor != null)
         {
-            // Aquí es donde usamos la imagen: Pasamos sus dimensiones (ej. 1920x1080)
-            // para que el reconstructor sepa hacer la regla de tres.
-            Vector2 dimensiones = new Vector2(imagenEnMemoria.width, imagenEnMemoria.height);
+            // Pasamos dimensiones genéricas si no hay imagen, para evitar error matemático
+            Vector2 dimensiones = (imagenEnMemoria != null) 
+                ? new Vector2(imagenEnMemoria.width, imagenEnMemoria.height) 
+                : new Vector2(1000, 1000);
+
             reconstructor.ReconstruirDocumento(lineas, dimensiones);
         }
-        
     }
+
+    // (El resto de tus funciones TraducirTexto, EscribirLog, LimpiarDatos siguen igual...)
+    // ... COPIA TUS MISMAS FUNCIONES AQUÍ ABAJO ...
+    // ...
+    // ...
 
     IEnumerator TraducirTexto(string texto, System.Action<string> callback)
     {
@@ -142,79 +145,33 @@ public class TraductorTexto : MonoBehaviour
             if (www.result == UnityWebRequest.Result.Success)
             {
                 string respuesta = www.downloadHandler.text;
-                // Parseo manual rápido del JSON de Google
                 int inicio = respuesta.IndexOf("[[\"") + 3;
                 int fin = respuesta.IndexOf("\"", inicio);
                 if (fin > inicio)
                 {
                     string t = respuesta.Substring(inicio, fin - inicio);
-                    // Limpieza básica de caracteres escapados
                     t = t.Replace("\\u0027", "'").Replace("\\n", "\n").Replace("\\\"", "\"");
                     callback(t);
                 }
                 else callback(texto);
             }
-            else callback(texto); // Si falla, devuelve el original
+            else callback(texto);
         }
     }
 
-    void EscribirLog(string mensaje)
-    {
-        // Debug.Log solo para desarrollo, puedes quitarlo luego
-        Debug.Log("[TRADUCTOR] " + mensaje);
-    }
-
-    public void LimpiarDatos()
-    {
-        lineas.Clear();
-        textoEstado.text = "";
-        imagenEnMemoria = null;
-    }
+    void EscribirLog(string msg) { Debug.Log("[TRADUCTOR] " + msg); }
+    public void LimpiarDatos() { lineas.Clear(); if(textoEstado) textoEstado.text = ""; imagenEnMemoria = null; }
 }
 
-// MANTÉN TUS CLASES SERIALIZABLES ABAJO IGUAL QUE ANTES (RespuestaOCR_V2, etc.)
-// ... (Copiar las clases de abajo de tu script anterior)
-
-[Serializable]
-public class ListaLineas
-{
-    public List<LineaConTraduccion> lineas;
-}
-
-[Serializable]
-public class RespuestaOCR_V2 
-{ 
-    public List<ParsedResult_V2> ParsedResults; 
-}
-
-[Serializable]
-public class ParsedResult_V2 
-{ 
-    public TextOverlay_V2 TextOverlay; 
-    public string ParsedText; 
-}
-
-[Serializable]
-public class TextOverlay_V2 
-{ 
-    public List<Line_V2> Lines; 
-}
-
-[Serializable]
-public class Line_V2 
-{ 
+// TUS CLASES SERIALIZABLES (CORRECTAS)
+[Serializable] public class ListaLineas { public List<LineaConTraduccion> lineas; }
+[Serializable] public class RespuestaOCR_V2 { public List<ParsedResult_V2> ParsedResults; }
+[Serializable] public class ParsedResult_V2 { public TextOverlay_V2 TextOverlay; public string ParsedText; }
+[Serializable] public class TextOverlay_V2 { public List<Line_V2> Lines; }
+[Serializable] public class Line_V2 { 
     public List<Word_V2> Words; 
     public string LineText; 
-    public float MaxHeight; 
+    public float MaxHeight; // Vital para el tamaño de letra
     public float MinTop; 
 }
-
-[Serializable]
-public class Word_V2 
-{ 
-    public string WordText; 
-    public float Left; 
-    public float Top; 
-    public float Height; 
-    public float Width; 
-}
+[Serializable] public class Word_V2 { public string WordText; public float Left; public float Top; public float Height; public float Width; }
