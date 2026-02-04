@@ -12,22 +12,12 @@ public class ControladorOCR : MonoBehaviour
     private string apiKey = Secretos.OCR_API_KEY;
     private string rutaLog;
     private string rutaEstado; // Nuevo: archivo de estado
-
-    public static ControladorOCR Instance;
     
     void Awake()
-{
-    // PATRÓN SINGLETON:
-    // Si ya existe otro OCR (porque volví del menú), me destruyo a mí mismo.
-    if (Instance != null && Instance != this)
     {
-        Destroy(gameObject); 
-        return; 
+        // ✅ Mantener este GameObject vivo entre escenas
+        DontDestroyOnLoad(gameObject);
     }
-
-    Instance = this;
-    DontDestroyOnLoad(gameObject); // Yo soy el elegido, yo sobrevivo.
-}
     
     void Start()
     {

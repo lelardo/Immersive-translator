@@ -5,41 +5,65 @@ using TMPro; // Necesario para acceder al Dropdown
 public class MenuManager : MonoBehaviour
 {
     [Header("UI References")]
-    public TMP_Dropdown dropdownIdioma; // Arrastra aquí tu Dropdown
+    public TMP_Dropdown dropdownIdioma; // Arrastra aquí el Dropdown de Idiomas
+    public TMP_Dropdown dropdownModo;   // <--- NUEVO: Arrastra aquí el Dropdown de Modos
 
     // Esta función se llamará al pulsar el botón "Iniciar"
     public void IniciarExperiencia()
     {
         Debug.Log("1. Botón presionado. Iniciando lógica...");
 
-        // PROTECCIÓN: ¿Se te olvidó arrastrar el dropdown?
+        // --- VALIDACIONES DE SEGURIDAD ---
         if (dropdownIdioma == null)
         {
-            Debug.LogError("¡ERROR CRÍTICO! La variable 'Dropdown Idioma' no está asignada en el Inspector.");
-            return; // Detenemos todo para que no explote
+            Debug.LogError("¡ERROR CRÍTICO! El 'Dropdown Idioma' no está asignado en el Inspector.");
+            return;
         }
 
-        // 1. Obtener datos
-        int indiceSeleccionado = dropdownIdioma.value;
+        if (dropdownModo == null)
+        {
+            Debug.LogError("¡ERROR CRÍTICO! El 'Dropdown Modo' no está asignado en el Inspector.");
+            return; 
+        }
+
+        // --- 1. LÓGICA DE IDIOMA ---
+        int indiceIdioma = dropdownIdioma.value;
         string codigoIdioma = "es";
 
-        switch (indiceSeleccionado)
+        // Ajusta esto al orden visual de tu lista
+        switch (indiceIdioma)
         {
-            case 0: codigoIdioma = "es"; break;
-            case 1: codigoIdioma = "en"; break;
-            case 2: codigoIdioma = "fr"; break;
-            case 3: codigoIdioma = "qu"; break;
+            case 0: codigoIdioma = "es"; break; // Español
+            case 1: codigoIdioma = "en"; break; // Inglés
+            case 2: codigoIdioma = "fr"; break; // Francés
+            case 3: codigoIdioma = "qu"; break; // Kichwa
             default: codigoIdioma = "es"; break;
         }
 
-        // 2. Guardar
+        // --- 2. LÓGICA DE MODO (NUEVO) ---
+        // Opción 0: Traducción Literal
+        // Opción 1: Adaptación Natural
+        int indiceModo = dropdownModo.value;
+        string codigoModo = "Traduccion"; 
+
+        switch (indiceModo)
+        {
+            case 0:
+                codigoModo = "Traduccion"; // Le dice al TraductorTexto que use Google
+                break;
+            case 1:
+                codigoModo = "Adaptacion"; // Le dice al TraductorTexto que use Gemini
+                break;
+        }
+
+        // --- 3. GUARDAR CONFIGURACIÓN ---
         PlayerPrefs.SetString("IdiomaDestino", codigoIdioma);
-        PlayerPrefs.SetString("ModoApp", "Traduccion"); 
-        PlayerPrefs.Save();
+        PlayerPrefs.SetString("ModoApp", codigoModo); 
+        PlayerPrefs.Save(); // Forzar guardado inmediato
 
-        Debug.Log($"2. Configuración guardada ({codigoIdioma}). Intentando cargar escena 1...");
+        Debug.Log($"2. Configuración guardada: Idioma [{codigoIdioma}] - Modo [{codigoModo}]. Cargando AR...");
 
-        // 3. CAMBIAR ESCENA POR NÚMERO (Más seguro que por nombre)
+        // --- 4. CAMBIAR ESCENA ---
         // Asegúrate que tu escena AR es la número 1 en Build Settings
         SceneManager.LoadScene(1); 
     }

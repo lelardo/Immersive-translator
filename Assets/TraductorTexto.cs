@@ -13,183 +13,218 @@ public class LineaConTraduccion
     public string traducido;
     public float posY;
     public float posX;
-    public float alto; // <--- ESTO ES LO IMPORTANTE PARA EL TAMAÑO DE LETRA
+    public float alto;
     public float ancho;
 }
 
 public class TraductorTexto : MonoBehaviour
 {
-    
     [Header("Referencias UI")]
     public TextMeshProUGUI textoEstado;
     
-    [Header("Configuración")]
-    public string idiomaDestino = "es"; // Sugerencia: Cambiado a 'es' por defecto
+    [Header("Referencias IA")]
+    public GeminiAdapter adaptadorGemini; // ← ESTO FALTABA
     
-    private string rutaLog;
-    private List<LineaConTraduccion> lineas = new List<LineaConTraduccion>();
-    private Texture2D imagenEnMemoria; 
-
     [Header("Reconstructor")]
     public ReconstructorDocumento reconstructor;
 
-    // void Awake() // <--- MOVIDO AQUÍ (Lugar correcto)
-    // {
-    //     DontDestroyOnLoad(gameObject);
-    // }
+    [Header("Configuración Interna")]
+    private string idiomaDestino = "es";
+    private string modoOperacion = "Traduccion"; // ← ESTO FALTABA
+    
+    private string rutaLog;
+    private List<LineaConTraduccion> lineas = new List<LineaConTraduccion>();
+    private Texture2D imagenEnMemoria;
 
     void Start()
     {
-        // ---------------------------------------------------------
-        // 1. LEER LA CONFIGURACIÓN DEL MENÚ
-        // ---------------------------------------------------------
+        // 1. LEER CONFIGURACIÓN DEL MENÚ
         if (PlayerPrefs.HasKey("IdiomaDestino"))
-        {
-            // Sobreescribimos la variable pública con lo que eligió el usuario
             idiomaDestino = PlayerPrefs.GetString("IdiomaDestino");
-            Debug.Log($"[TRADUCTOR] Idioma cargado desde menú: {idiomaDestino}");
-        }
-        else
-        {
-            Debug.LogWarning("[TRADUCTOR] No se encontró configuración, usando idioma por defecto: " + idiomaDestino);
-        }
+        
+        if (PlayerPrefs.HasKey("ModoApp"))
+            modoOperacion = PlayerPrefs.GetString("ModoApp"); // ← ESTO FALTABA
 
-        // ---------------------------------------------------------
-        // 2. CONFIGURACIÓN RESTANTE (Lo que ya tenías)
-        // ---------------------------------------------------------
+        Debug.Log($"[TRADUCTOR] Iniciado. Modo: {modoOperacion} -> Idioma: {idiomaDestino}");
+
         rutaLog = Path.Combine(Application.persistentDataPath, "traductor_log.txt");
-        if(textoEstado) textoEstado.text = ""; 
+        if(textoEstado) textoEstado.text = "";
+        
+        // Conectar eventos de Gemini
+        if (adaptadorGemini != null)
+        {
+            adaptadorGemini.OnStatusUpdate += (mensaje) => {
+                if (textoEstado != null) textoEstado.text = mensaje;
+            };
+        }
     }
 
     public void ProcesarOCR(string jsonOCR, Texture2D imagen)
     {
         EscribirLog("=== Datos recibidos del OCR ===");
-        imagenEnMemoria = imagen; 
-        StartCoroutine(ExtraerYTraducir(jsonOCR));
+        imagenEnMemoria = imagen;
+        
+        // Parsear JSON
+        RespuestaOCR_V2 respuesta = JsonUtility.FromJson<RespuestaOCR_V2>(jsonOCR);
+        
+        if (respuesta == null || respuesta.ParsedResults == null || respuesta.ParsedResults.Count == 0)
+        {
+            if(textoEstado) textoEstado.text = "✗ No detecté texto.";
+            return;
+        }
+
+        // Llenar listas
+        lineas.Clear();
+        List<string> textosPuros = new List<string>();
+        
+        foreach (var pr in respuesta.ParsedResults)
+        {
+            if (pr.TextOverlay == null) continue;
+            
+            foreach (var l in pr.TextOverlay.Lines)
+            {
+                if (l.Words == null || l.Words.Count == 0) continue;
+                
+                LineaConTraduccion nueva = new LineaConTraduccion();
+                nueva.original = l.LineText;
+                nueva.posY = l.MinTop;
+                nueva.posX = l.Words[0].Left;
+                nueva.alto = l.MaxHeight;
+                
+                float inicio = l.Words[0].Left;
+                var finWord = l.Words[l.Words.Count - 1];
+                nueva.ancho = (finWord.Left + finWord.Width) - inicio;
+                
+                lineas.Add(nueva);
+                textosPuros.Add(l.LineText);
+            }
+        }
+
+        if (lineas.Count == 0)
+        {
+            if(textoEstado) textoEstado.text = "✗ No se detectó texto";
+            return;
+        }
+
+        // ✅ DECISIÓN CLAVE: ¿Qué modo usar?
+        if (modoOperacion == "Traduccion")
+        {
+            // Google Translate
+            StartCoroutine(ProcesoGoogleTranslate(textosPuros, imagen));
+        }
+        else
+        {
+            // Gemini
+            if (adaptadorGemini != null)
+            {
+                StartCoroutine(adaptadorGemini.SolicitarAdaptacion(textosPuros, idiomaDestino, modoOperacion, (resultados) => 
+                {
+                    if (resultados != null)
+                    {
+                        for(int i = 0; i < lineas.Count; i++)
+                        {
+                            if(i < resultados.Count)
+                                lineas[i].traducido = resultados[i];
+                        }
+                        
+                        if (reconstructor != null && imagenEnMemoria != null)
+                        {
+                            reconstructor.ReconstruirDocumento(lineas, new Vector2(imagenEnMemoria.width, imagenEnMemoria.height));
+                        }
+                        
+                        if(textoEstado) textoEstado.text = "✅ ¡Listo!";
+                    }
+                    else
+                    {
+                        if(textoEstado) textoEstado.text = "⚠️ Falló Gemini.";
+                    }
+                }));
+            }
+            else
+            {
+                if(textoEstado) textoEstado.text = "✗ Falta GeminiAdapter";
+            }
+        }
     }
 
-    IEnumerator ExtraerYTraducir(string json)
+    IEnumerator ProcesoGoogleTranslate(List<string> textos, Texture2D textura)
     {
-        if(textoEstado) textoEstado.text = "Procesando...";
-        lineas.Clear();
-        
-        // --- 1. VALIDACIONES ---
-        if (string.IsNullOrEmpty(json) || json.Contains("\"IsErroredOnProcessing\":true"))
-        {
-            if(textoEstado) textoEstado.text = "Error en lectura OCR";
-            yield break;
-        }
-
-        RespuestaOCR_V2 datos = null;
-        try 
-        {
-            datos = JsonUtility.FromJson<RespuestaOCR_V2>(json);
-        }
-        catch (Exception) { }
-
-        if (datos == null || datos.ParsedResults == null || datos.ParsedResults.Count == 0 ||
-            datos.ParsedResults[0].TextOverlay == null)
-        {
-            if(textoEstado) textoEstado.text = "No se detectó texto";
-            yield break;
-        }
-
-        var lineasOCR = datos.ParsedResults[0].TextOverlay.Lines;
-        
-        // --- 2. PROCESO DE TRADUCCIÓN ---
         int contador = 0;
-        foreach (var lineaOCR in lineasOCR)
+        
+        foreach(var linea in lineas)
         {
-            contador++;
-            if(textoEstado) textoEstado.text = $"Traduciendo... {Mathf.Round((float)contador/lineasOCR.Count * 100)}%";
+            bool termino = false;
             
-            string textoOriginal = lineaOCR.LineText;
-            string textoTraducido = "";
-            
-            // Llamada a Google Translate
-            yield return StartCoroutine(TraducirTexto(textoOriginal, (resultado) => {
-                textoTraducido = resultado;
+            StartCoroutine(CorutinaTraducirGoogle(linea.original, (trad) => {
+                linea.traducido = trad;
+                termino = true;
             }));
             
-            // Cálculo de ancho (aunque para la lista vertical no es crítico, lo mantenemos)
-            float anchoLinea = 0;
-            float posX = 0;
-            if (lineaOCR.Words != null && lineaOCR.Words.Count > 0)
-            {
-                posX = lineaOCR.Words[0].Left;
-                var finWord = lineaOCR.Words[lineaOCR.Words.Count - 1];
-                anchoLinea = (finWord.Left + finWord.Width) - posX;
-            }
+            yield return new WaitUntil(() => termino);
             
-            // GUARDAMOS LOS DATOS
-            lineas.Add(new LineaConTraduccion
-            {
-                original = textoOriginal,
-                traducido = textoTraducido,
-                posY = lineaOCR.MinTop,
-                posX = posX,
-                alto = lineaOCR.MaxHeight, // <--- AQUÍ CAPTURAMOS LA ALTURA DE LA FUENTE
-                ancho = anchoLinea
-            });
-
-            yield return new WaitForSeconds(0.1f); 
+            contador++;
+            
+            if(textoEstado)
+                textoEstado.text = $"Traduciendo... {Mathf.Round((float)contador / lineas.Count * 100)}%";
+            
+            yield return new WaitForSeconds(0.1f);
         }
         
-        // --- 3. MANDAR A RECONSTRUIR ---
-        if(textoEstado) textoEstado.text = ""; 
-        
-        if (reconstructor != null)
+        // ✅ DIBUJAR
+        if (reconstructor != null && textura != null)
         {
-            // Pasamos dimensiones genéricas si no hay imagen, para evitar error matemático
-            Vector2 dimensiones = (imagenEnMemoria != null) 
-                ? new Vector2(imagenEnMemoria.width, imagenEnMemoria.height) 
-                : new Vector2(1000, 1000);
-
-            reconstructor.ReconstruirDocumento(lineas, dimensiones);
+            reconstructor.ReconstruirDocumento(lineas, new Vector2(textura.width, textura.height));
+            if(textoEstado) textoEstado.text = "✅ Traducción completa";
         }
     }
 
-    // (El resto de tus funciones TraducirTexto, EscribirLog, LimpiarDatos siguen igual...)
-    // ... COPIA TUS MISMAS FUNCIONES AQUÍ ABAJO ...
-    // ...
-    // ...
-
-    IEnumerator TraducirTexto(string texto, System.Action<string> callback)
+    IEnumerator CorutinaTraducirGoogle(string texto, System.Action<string> callback)
     {
-        string url = $"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={idiomaDestino}&dt=t&q={UnityWebRequest.EscapeURL(texto)}";
+        string url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=" + idiomaDestino + "&dt=t&q=" + UnityWebRequest.EscapeURL(texto);
+        
         using (UnityWebRequest www = UnityWebRequest.Get(url))
         {
             yield return www.SendWebRequest();
+            
             if (www.result == UnityWebRequest.Result.Success)
             {
                 string respuesta = www.downloadHandler.text;
                 int inicio = respuesta.IndexOf("[[\"") + 3;
                 int fin = respuesta.IndexOf("\"", inicio);
+                
                 if (fin > inicio)
                 {
                     string t = respuesta.Substring(inicio, fin - inicio);
                     t = t.Replace("\\u0027", "'").Replace("\\n", "\n").Replace("\\\"", "\"");
                     callback(t);
                 }
-                else callback(texto);
+                else
+                {
+                    callback(texto);
+                }
             }
-            else callback(texto);
+            else
+            {
+                callback(texto);
+            }
         }
     }
 
-    void EscribirLog(string msg) { Debug.Log("[TRADUCTOR] " + msg); }
-    public void LimpiarDatos() { lineas.Clear(); if(textoEstado) textoEstado.text = ""; imagenEnMemoria = null; }
+    void EscribirLog(string msg)
+    {
+        Debug.Log("[TRADUCTOR] " + msg);
+    }
 }
 
-// TUS CLASES SERIALIZABLES (CORRECTAS)
-[Serializable] public class ListaLineas { public List<LineaConTraduccion> lineas; }
+// CLASES SERIALIZABLES
 [Serializable] public class RespuestaOCR_V2 { public List<ParsedResult_V2> ParsedResults; }
 [Serializable] public class ParsedResult_V2 { public TextOverlay_V2 TextOverlay; public string ParsedText; }
 [Serializable] public class TextOverlay_V2 { public List<Line_V2> Lines; }
-[Serializable] public class Line_V2 { 
+[Serializable] public class Line_V2 
+{ 
     public List<Word_V2> Words; 
     public string LineText; 
-    public float MaxHeight; // Vital para el tamaño de letra
-    public float MinTop; 
+    public float MaxHeight;
+    public float MinTop;
 }
 [Serializable] public class Word_V2 { public string WordText; public float Left; public float Top; public float Height; public float Width; }
