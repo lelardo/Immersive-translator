@@ -19,6 +19,7 @@ public class LineaConTraduccion
 
 public class TraductorTexto : MonoBehaviour
 {
+    
     [Header("Referencias UI")]
     public TextMeshProUGUI textoEstado;
     
@@ -32,13 +33,30 @@ public class TraductorTexto : MonoBehaviour
     [Header("Reconstructor")]
     public ReconstructorDocumento reconstructor;
 
-    void Awake() // <--- MOVIDO AQUÍ (Lugar correcto)
-    {
-        DontDestroyOnLoad(gameObject);
-    }
+    // void Awake() // <--- MOVIDO AQUÍ (Lugar correcto)
+    // {
+    //     DontDestroyOnLoad(gameObject);
+    // }
 
     void Start()
     {
+        // ---------------------------------------------------------
+        // 1. LEER LA CONFIGURACIÓN DEL MENÚ
+        // ---------------------------------------------------------
+        if (PlayerPrefs.HasKey("IdiomaDestino"))
+        {
+            // Sobreescribimos la variable pública con lo que eligió el usuario
+            idiomaDestino = PlayerPrefs.GetString("IdiomaDestino");
+            Debug.Log($"[TRADUCTOR] Idioma cargado desde menú: {idiomaDestino}");
+        }
+        else
+        {
+            Debug.LogWarning("[TRADUCTOR] No se encontró configuración, usando idioma por defecto: " + idiomaDestino);
+        }
+
+        // ---------------------------------------------------------
+        // 2. CONFIGURACIÓN RESTANTE (Lo que ya tenías)
+        // ---------------------------------------------------------
         rutaLog = Path.Combine(Application.persistentDataPath, "traductor_log.txt");
         if(textoEstado) textoEstado.text = ""; 
     }
